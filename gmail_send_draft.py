@@ -1,24 +1,27 @@
 """
-Send a Gmail draft by subject line using the Gmail API.
+Find today's Daily Briefing draft and send it, with a recipient safety check.
 
 Usage:
-    python gmail_send_draft.py "Daily Briefing - Tuesday, May 5, 2026"
+    python3 gmail_send_draft.py
 
-First run will open a browser for OAuth authentication and save a token.json.
+Automatically searches for a draft with today's date in the subject line,
+e.g. "Daily Briefing - Tuesday, May 5, 2026". Only sends if the draft is
+addressed to smitha@wander.com.
 """
 
-import sys
 import os
-import json
-import base64
+import sys
+from datetime import datetime
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
-CREDENTIALS_FILE = "credentials.json"
-TOKEN_FILE = "token.json"
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CREDENTIALS_FILE = os.path.join(SCRIPT_DIR, "credentials.json")
+TOKEN_FILE = os.path.join(SCRIPT_DIR, "token.json")
+ALLOWED_RECIPIENT = "smitha@wander.com"
 
 
 def get_gmail_service():
@@ -36,43 +39,41 @@ def get_gmail_service():
     return build("gmail", "v1", credentials=creds)
 
 
-def find_draft_by_subject(service, subject):
+def get_todays_subject():
+    today = datetime.now()
+    return f"Daily Briefing - {today.strftime('%A, %B %-d, %Y')}"
+
+
+def find_draft(service, subject):
     results = service.users().drafts().list(userId="me", q=f"subject:{subject}").execute()
     drafts = results.get("drafts", [])
-    if not drafts:
-        return None
-    # Fetch full draft details to confirm subject match
     for draft in drafts:
         full = service.users().drafts().get(userId="me", id=draft["id"], format="metadata").execute()
         headers = full["message"].get("payload", {}).get("headers", [])
-        for h in headers:
-            if h["name"].lower() == "subject" and subject.lower() in h["value"].lower():
-                return draft["id"]
+        header_map = {h["name"].lower(): h["value"] for h in headers}
+        subject_match = subject.lower() in header_map.get("subject", "").lower()
+        recipient = header_map.get("to", "")
+        if not subject_match:
+            continue
+        if ALLOWED_RECIPIENT.lower() not in recipient.lower():
+            print(f"Blocked: draft recipient '{recipient}' is not {ALLOWED_RECIPIENT}. Skipping.")
+            return None
+        return draft["id"]
     return None
 
 
-def send_draft(service, draft_id):
-    result = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()
-    return result
-
-
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python gmail_send_draft.py \"<email subject>\"")
-        sys.exit(1)
-
-    subject = sys.argv[1]
-    print(f"Looking for draft with subject: {subject}")
+    subject = get_todays_subject()
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Looking for draft: {subject}")
 
     service = get_gmail_service()
-    draft_id = find_draft_by_subject(service, subject)
+    draft_id = find_draft(service, subject)
 
     if not draft_id:
-        print(f"No draft found matching subject: {subject}")
-        sys.exit(1)
+        print("No matching draft found. Nothing sent.")
+        sys.exit(0)
 
-    print(f"Found draft (id: {draft_id}). Sending...")
-    result = send_draft(service, draft_id)
+    result = service.users().drafts().send(userId="me", body={"id": draft_id}).execute()
     print(f"Sent! Message ID: {result.get('id')}")
 
 
