@@ -1,0 +1,30 @@
+name: Daily Briefing Email
+
+on:
+  schedule:
+    - cron: "0 14 * * *"  # 6AM PST (UTC-8) / 7AM PDT (UTC-7) — runs at 14:00 UTC year-round
+  workflow_dispatch:       # allows manual trigger from GitHub UI
+
+jobs:
+  send-briefing:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Write Gmail credentials
+        run: |
+          echo '${{ secrets.GMAIL_CREDENTIALS }}' > credentials.json
+          echo '${{ secrets.GMAIL_TOKEN }}' > token.json
+
+      - name: Send Daily Briefing
+        run: python3 gmail_send_draft.py
